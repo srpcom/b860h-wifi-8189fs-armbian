@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# Installer Lengkap Wi-Fi Internal (8189fs) + USB TL-WN722N + WAN Failover
-# Untuk STB ZTE B860H / Armbian (LAN Utama <-> Wi-Fi Cadangan Otomatis)
+# Universal Installer Wi-Fi Internal + USB TL-WN722N + WAN Failover (Armbian)
+# Mendukung STB ZTE B860H / P212 (8189fs/es) & Fiberhome HG680-P / HG860P (rtl8xxxu)
 # Repo: https://github.com/srpcom/b860h-wifi-8189fs-armbian
 # ==============================================================================
 set -e
@@ -55,16 +55,12 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 echo "======================================================================"
-echo "  SRPCOM B860H Wi-Fi 8189fs + Smart WAN Failover Installer (Full)"
+echo "  SRPCOM Armbian Wi-Fi Auto-Detect + Smart WAN Failover Installer"
 echo "======================================================================"
 
-# 1. Pasang Driver Wi-Fi Internal 8189fs
-log_info "Langkah 1/5: Memastikan driver Wi-Fi internal 8189fs terpasang..."
-if ! lsmod | grep -q "^8189fs"; then
-    curl -fsSL "${REPO_RAW}/install-driver.sh" | bash
-else
-    log_ok "Driver 8189fs sudah aktif."
-fi
+# 1. Deteksi Otomatis Tipe STB & Pasang Driver/Firmware Wi-Fi Internal
+log_info "Langkah 1/5: Mendeteksi hardware Wi-Fi STB & memastikan driver/firmware aktif..."
+curl -fsSL "${REPO_RAW}/install-driver.sh" | bash
 
 # 2. Konfigurasi Dukungan USB Wi-Fi Eksternal (TP-Link TL-WN722N v1/v2/v3)
 log_info "Langkah 2/5: Menyiapkan optimasi USB Wi-Fi eksternal (TL-WN722N)..."
