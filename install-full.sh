@@ -98,9 +98,11 @@ sysctl -p /etc/sysctl.d/99-wan-failover.conf >/dev/null 2>&1 || true
 mkdir -p /etc/systemd/resolved.conf.d
 cat > /etc/systemd/resolved.conf.d/99-failover.conf <<'EOF'
 [Resolve]
-FallbackDNS=1.1.1.1 8.8.8.8 9.9.9.9
+DNS=1.1.1.1 8.8.8.8
+FallbackDNS=9.9.9.9 1.0.0.1
 EOF
 systemctl reload-or-restart systemd-resolved 2>/dev/null || true
+nmcli dev reapply "$LAN_IF" 2>/dev/null || true
 
 # 4. Profil Wi-Fi NetworkManager Auto-Connect
 log_info "Langkah 4/5: Menyiapkan profil koneksi Wi-Fi otomatis..."
@@ -243,8 +245,12 @@ ensure_iface_route_exists() {
     ip_addr=\$(get_iface_ip "\$iface")
     [ -n "\$gw" ] && [ -n "\$ip_addr" ] || return 1
 
-    if ! ip -4 route show default dev "\$iface" | grep -qE "\\bmetric \${target_metric}\\b"; then
+    local count
+    count=\$(ip -4 route show default dev "\$iface" | grep -cE "\\bmetric \${target_metric}\\b" || true)
+    if [ "\$count" -eq 0 ]; then
         ip -4 route replace default via "\$gw" dev "\$iface" proto static src "\$ip_addr" metric "\$target_metric" 2>/dev/null || true
+    elif [ "\$count" -gt 1 ]; then
+        ip -4 route del default via "\$gw" dev "\$iface" proto static metric "\$target_metric" 2>/dev/null || true
     fi
 
     ip -4 route show default dev "\$iface" | while read -r line; do
@@ -306,11 +312,21 @@ apply_wan_mode() {
             [ -n "\$m6" ] && [ "\$m6" -lt 900 ] 2>/dev/null && ip -6 route del default dev "\$LAN_IF" metric "\$m6" 2>/dev/null || true
         done
 
+        if ! resolvectl dns "\$wifi_if" 2>/dev/null | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+            local wifi_gw
+            wifi_gw=\$(get_iface_gw "\$wifi_if")
+            [ -n "\$wifi_gw" ] && resolvectl dns "\$wifi_if" "\$wifi_gw" 1.1.1.1 8.8.8.8 >/dev/null 2>&1 || true
+        fi
         resolvectl default-route "\$LAN_IF" false >/dev/null 2>&1 || true
         resolvectl default-route "\$wifi_if" true >/dev/null 2>&1 || true
     else
         if iface_has_ip_and_link "\$LAN_IF"; then
             ensure_iface_route_exists "\$LAN_IF" "\$LAN_METRIC_PRIMARY" >/dev/null 2>&1 || true
+        fi
+        if ! resolvectl dns "\$LAN_IF" 2>/dev/null | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+            local lan_gw
+            lan_gw=\$(get_iface_gw "\$LAN_IF")
+            [ -n "\$lan_gw" ] && resolvectl dns "\$LAN_IF" "\$lan_gw" 1.1.1.1 8.8.8.8 >/dev/null 2>&1 || true
         fi
         resolvectl default-route "\$LAN_IF" true >/dev/null 2>&1 || true
         if [ -n "\$wifi_if" ]; then
