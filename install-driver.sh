@@ -81,6 +81,48 @@ else
     log_info "Mengkloning source driver jwrdegoede/rtl8189ES_linux (branch rtl8189fs)..."
     git clone --depth 1 --branch rtl8189fs https://github.com/jwrdegoede/rtl8189ES_linux.git "$BUILD_DIR/src"
 
+    # Deteksi backport API cfg80211 pada kernel Linux 6.18+ (PR #149 jwrdegoede/rtl8189ES_linux)
+    CFG_HDR="$KSRC/include/net/cfg80211.h"
+    CFG_SRC="$BUILD_DIR/src/os_dep/linux/ioctl_cfg80211.c"
+    if [ -f "$CFG_HDR" ] && [ -f "$CFG_SRC" ]; then
+        if awk '/^void cfg80211_new_sta\(/,/\);/' "$CFG_HDR" | grep -q "struct wireless_dev"; then
+            log_info "Mendeteksi API cfg80211 wireless_dev (backport 7.1 -> ${KVER}), menyesuaikan ioctl_cfg80211.c..."
+            sed -i 's/KERNEL_VERSION(7, 1, 0)/KERNEL_VERSION(6, 18, 0)/g' "$CFG_SRC"
+        fi
+        if awk '/\(\*remain_on_channel\)\(/,/\);/' "$CFG_HDR" | grep -q "rx_addr"; then
+            log_info "Mendeteksi parameter rx_addr / strscpy (backport 7.2 -> ${KVER}), menyesuaikan ioctl_cfg80211.c..."
+            sed -i 's/KERNEL_VERSION(7, 2, 0)/KERNEL_VERSION(6, 18, 0)/g' "$CFG_SRC"
+        fi
+        if awk '/\(\*mgmt_tx\)\(/,/\);/' "$CFG_HDR" | grep -qE "u64[[:space:]]+cookie"; then
+            log_info "Mendeteksi parameter u64 cookie by-value (backport 7.3 -> ${KVER}), menyesuaikan ioctl_cfg80211.c..."
+            sed -i 's/KERNEL_VERSION(7, 3, 0)/KERNEL_VERSION(6, 18, 0)/g' "$CFG_SRC"
+        fi
+        if awk '/\(\*add_key\)\(/,/\);/' "$CFG_HDR" | grep -q "nl80211_key_type"; then
+            log_info "Mendeteksi enum nl80211_key_type pada add_key/get_key/del_key, menyesuaikan ioctl_cfg80211.c..."
+            python3 - "$CFG_SRC" <<'PYEOF'
+import sys, re
+p = sys.argv[1]
+with open(p, 'r') as f:
+    s = f.read()
+s = re.sub(
+    r'(static int cfg80211_rtw_(?:add|get)_key\(.*?\n#endif\n\s*), bool pairwise\b',
+    r'\1, enum nl80211_key_type type',
+    s,
+    flags=re.DOTALL
+)
+s = s.replace('u8 key_index, bool pairwise, const u8 *mac_addr', 'u8 key_index, enum nl80211_key_type type, const u8 *mac_addr')
+for fn in ['cfg80211_rtw_add_key', 'cfg80211_rtw_get_key', 'cfg80211_rtw_del_key']:
+    idx = s.find(fn + '(')
+    if idx != -1:
+        brace = s.find('\n{\n', idx)
+        if brace != -1:
+            s = s[:brace+3] + '\tbool pairwise = (type == NL80211_KEYTYPE_PAIRWISE);\n' + s[brace+3:]
+with open(p, 'w') as f:
+    f.write(s)
+PYEOF
+        fi
+    fi
+
     # Buat GCC wrapper agar kompatibel dengan kernel yang dibangun dengan GCC versi lebih baru (flag -fmin-function-alignment)
     GCC_WRAP="$BUILD_DIR/gcc-wrap"
     cat > "$GCC_WRAP" <<'EOF'
